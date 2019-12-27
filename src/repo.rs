@@ -15,9 +15,9 @@ pub fn print_repos(user: &str) {
 }
 
 fn get_repos(username: &str) -> Result<Vec<String>, Box<dyn Error>> {
-    let mut resp = reqwest::get(&format!("https://api.github.com/users/{}/repos", username))?;
+    let url = format!("https://api.github.com/users/{}/repos", username);
 
-    let resp: Value = resp.json()?;
+    let resp: Value = collect_repos(&url).unwrap();
 
     let res: Vec<String> = match resp {
         Value::Array(a) => a
@@ -36,28 +36,32 @@ fn get_repos(username: &str) -> Result<Vec<String>, Box<dyn Error>> {
     Ok(res)
 }
 
-fn collect_repos(url: &str) -> Result<Vec<String>, Box<dyn Error>> {
+fn collect_repos(url: &str) -> Result<Value, Box<dyn Error>> {
     let mut resp = reqwest::get(url)?;
-    let link = resp.headers().get("link").unwrap().to_str().unwrap();
+
+    let json: Value = resp.json()?;
+
+    let link = resp
+        .headers()
+        .get("link")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .clone();
     let (_, (next, last)) = parse_link(&link).unwrap();
 
-    let resp: Value = resp.json()?;
-
-    let res: Vec<String> = match resp {
-        Value::Array(a) => a
-            .into_iter()
-            .map(|i| match i {
-                Value::Object(o) => match &o["name"] {
-                    Value::String(s) => s.to_owned(),
-                    _ => unreachable!(),
-                },
-                _ => unreachable!(),
-            })
-            .collect(),
-        _ => unreachable!(),
-    };
-
-    Ok(res)
+    if next != last {
+        let next = collect_repos(next)?;
+        match (json, next) {
+            (Value::Array(mut a), Value::Array(b)) => {
+                a.extend(b.into_iter());
+                return Ok(Value::Array(a));
+            }
+            _ => unreachable!(),
+        };
+    } else {
+        Ok(json)
+    }
 }
 
 fn parse_link(input: &str) -> nom::IResult<&str, (&str, &str)> {
